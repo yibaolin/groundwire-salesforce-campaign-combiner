@@ -80,13 +80,14 @@ This program is released under the GNU General Public License. http://www.gnu.or
 	            <apex:outputField value="{!targetCampaign.IsActive}"  />
 	            <apex:outputPanel />
 	        </apex:pageBlockSection>
+	        <apex:actionRegion >
 	        <apex:pageBlockSection title="Add Members from These Campaigns" columns="1" id="addSection" collapsible="false" >
 	            <apex:pageBlockSectionItem id="campaignSelect">
 	            	<apex:outputLabel value="Campaign Name" />
 		            <apex:outputPanel >	            
-		            	<apex:inputField value="{!campaignToAddPicker.parentId}" >
+		            	<apex:inputField value="{!campaignToAddPicker.parentId}" id="picker1" >
 						</apex:inputField>
-						<apex:commandLink value="[ add to list ]" action="{!loadAddition}" />
+						<apex:commandLink value="[ add to list ]" action="{!loadAddition}" onclick="if(document.getElementById('{!$Component.picker1}').value=='') { alert('Specify Campaign Name, then click Add to List.'); return false; }" />
 						<apex:outputText value=" " />
 						<apex:commandLink value=" [ clear list ]" action="{!clearAdds}" />
 					</apex:outputPanel>
@@ -107,6 +108,16 @@ This program is released under the GNU General Public License. http://www.gnu.or
 						<apex:column value="{!tc.Unconverted_Leads__c}" />
 					</apex:pageBlockTable>
 				</apex:pageBlockSectionItem>
+	            <apex:pageBlockSectionItem rendered="{!(adds > 0)}" >
+	            	<apex:outputPanel />
+	            	<apex:outputPanel >
+		            	<apex:outputLabel value="Add members with status:" styleClass="boldLabel" />
+		            	<apex:outputText value="  " />
+						<apex:selectList value="{!addMemberStatus}" size="1" >
+							<apex:selectOptions value="{!allMemberStatuses}"/>
+						</apex:selectList>
+					</apex:outputPanel>
+	            </apex:pageBlockSectionItem>				
 	            <apex:pageBlockSectionItem rendered="{!(adds > 1)}" >
 	            	<apex:outputPanel />
 	            	<apex:outputPanel >
@@ -115,13 +126,15 @@ This program is released under the GNU General Public License. http://www.gnu.or
 	            	</apex:outputPanel>
 	            </apex:pageBlockSectionItem>				
 	        </apex:pageBlockSection>
+	        </apex:actionRegion>
+	        <apex:actionRegion >
 	        <apex:pageBlockSection title="Exclude Members from These Campaigns" columns="1" id="subtractSection" collapsible="false" >
 	            <apex:pageBlockSectionItem id="campaignSelect" >
 	            	<apex:outputLabel value="Campaign Name" />
 		            <apex:outputPanel >	            
-		            	<apex:inputField value="{!campaignToSubtractPicker.parentId}" >
+		            	<apex:inputField value="{!campaignToSubtractPicker.parentId}" id="picker2" >
 						</apex:inputField>
-						<apex:commandLink value="[ add to list ]" action="{!loadSubtraction}" />
+						<apex:commandLink value="[ add to list ]" action="{!loadSubtraction}"  onclick="if (document.getElementById('{!$Component.picker2}').value=='') { alert('Specify Campaign Name, then click Add to List.'); return false; };" />
 						<apex:outputText value=" " />
 						<apex:commandLink value="[ clear list ]" action="{!clearSubtracts}" />
 					</apex:outputPanel> 
@@ -142,6 +155,16 @@ This program is released under the GNU General Public License. http://www.gnu.or
 						<apex:column value="{!tc.Unconverted_Leads__c}" />
 					</apex:pageBlockTable>
 				</apex:pageBlockSectionItem>
+	            <apex:pageBlockSectionItem rendered="{!(subtracts > 0)}" >
+	            	<apex:outputPanel />
+	            	<apex:outputPanel >
+		            	<apex:outputLabel value="Exclude members with status:" styleClass="boldLabel" />
+		            	<apex:outputText value="  " />
+						<apex:selectList value="{!excludeMemberStatus}" size="1" >
+							<apex:selectOptions value="{!allMemberStatuses}"/>
+						</apex:selectList>
+					</apex:outputPanel>
+	            </apex:pageBlockSectionItem>				
 	            <apex:pageBlockSectionItem rendered="{!(subtracts > 1)}" >
 	            	<apex:outputPanel />
 	            	<apex:outputPanel >
@@ -150,6 +173,7 @@ This program is released under the GNU General Public License. http://www.gnu.or
 	            	</apex:outputPanel>
 	            </apex:pageBlockSectionItem>				
 	        </apex:pageBlockSection>
+	        </apex:actionRegion>
 	        <apex:outputPanel id="miscSection" >
 		        <apex:pageBlockSection title="Options" columns="1" collapsible="false" rendered="{!(adds > 0)}" >
 					<apex:pageBlockSectionItem >
@@ -170,8 +194,8 @@ This program is released under the GNU General Public License. http://www.gnu.or
 			</apex:outputPanel>
 	    </apex:pageBlock>
 	    <apex:outputPanel rendered="{!AND(done, batchJobCount > 0)}" >
-		</apex:outputPanel> 
 			<c:batchJobs batchComponentLabel="{!batchLabel}" numberOfJobs="{!batchJobCount}" />
+		</apex:outputPanel> 
 		</apex:outputPanel>
      </apex:form>
 </apex:page>

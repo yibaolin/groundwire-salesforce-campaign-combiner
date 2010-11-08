@@ -26,7 +26,9 @@ public with sharing class GW_CTRL_CampaignCombiner {
 	public campaign targetCampaignPicker { get; set; }
 	public campaign campaignToAddPicker { get; set; }
 	public campaign campaignToSubtractPicker { get; set; }
-	public string newMemberStatus { get; set; }   // use this to set the status for new members
+	public string addMemberStatus { get; set; }   		// use this to limit the status of members added
+	public string excludeMemberStatus { get; set; }  	// use this to limit the status of members excluded
+	public string newMemberStatus { get; set; }   		// use this to set the status for new members
 	public string defaultStatus { get; private set; }
 	public integer adds { get { return (campaignsToAdd == null) ? 0 : campaignsToAdd.size(); } }
 	public integer subtracts { get { return (campaignsToSubtract == null) ? 0 : campaignsToSubtract.size(); } }
@@ -38,6 +40,7 @@ public with sharing class GW_CTRL_CampaignCombiner {
 	public integer membersAdded { get; private set; }
 	public integer membersRemoved { get; private set; }
 	public boolean done { get; set; }
+    public List<SelectOption> allMemberStatuses { get; private set; }
 
 	// unique ids of selected campaigns
 	set<id> addSet;
@@ -68,6 +71,23 @@ public with sharing class GW_CTRL_CampaignCombiner {
 		wizardStep = 1;
 		batchJobCount = 0;
 		done = false;
+
+		// load unique member statuses
+        allMemberStatuses = new SelectOption[0];
+   		allMemberStatuses.add(new SelectOption('','- Any Status -'));
+   		allMemberStatuses.add(new SelectOption('AllResponded','- All Responded -'));
+   		allMemberStatuses.add(new SelectOption('AllNotResponded','- All Not Responded -'));
+   		allMemberStatuses.add(new SelectOption('Sent','Sent'));
+   		allMemberStatuses.add(new SelectOption('Responded','Responded'));
+   		set<string> cmsSet = new set<string>();
+        for (CampaignMemberStatus cms : [select label from CampaignMemberStatus 
+        									where isDeleted = false and label != 'Sent' and label != 'Responded'
+        									order by campaignId, sortorder limit 500]) {
+   			if (!cmsSet.contains(cms.label)) {
+   				allMemberStatuses.add(new SelectOption(cms.label, cms.label));
+   				cmsSet.add(cms.label);
+   			}
+        }
 	}
 	
 	public PageReference step2() {
@@ -192,6 +212,16 @@ public with sharing class GW_CTRL_CampaignCombiner {
 			campaignIdList += ',\'' + c.Id + '\'';
 		}
 				
+		// build the member status filter strings
+		string addFilter = (addMemberStatus == null) ? '' :
+			(addMemberStatus == 'AllResponded') ? 'and hasresponded = true ' :  
+			(addMemberStatus == 'AllNotResponded') ? 'and hasresponded = false ' :  
+			'and status = : addMemberStatus ';  
+		string excludeFilter = (excludeMemberStatus == null) ? '' :
+			(excludeMemberStatus == 'AllResponded') ? 'and hasresponded = true ' :  
+			(excludeMemberStatus == 'AllNotResponded') ? 'and hasresponded = false ' :  
+			'and status = : excludeMemberStatus '; 
+
 		list<sobject> membersToAvoidC = new list<campaignMember>();
 		list<sobject> membersToAvoidL = new list<campaignMember>();
 		set<id> avoidSetC = new set<id>();
@@ -204,20 +234,26 @@ public with sharing class GW_CTRL_CampaignCombiner {
 			if (intersectionForSubtracts) {
 				// get ids of contacts and lead that are in all selected campaigns to exclude
 				integer siz = subtractSet.size();
-				membersToAvoidC = [select contactid from campaignmember where contactid != null and campaignid in : subtractSet 
-										group by contactid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF];
+				membersToAvoidC = database.query(
+					'select contactid from campaignmember where contactid != null ' +
+					'and campaignid in : subtractSet ' + excludeFilter + 
+					'group by contactid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF');
 
-				membersToAvoidL = [select leadid from campaignmember where leadId != null and campaignid in : subtractSet
-										and lead.isConverted = false 
-										group by leadid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF];
+				membersToAvoidL = database.query(
+					'select leadid from campaignmember where leadId != null and campaignid in : subtractSet ' +
+					'and lead.isConverted = false ' + excludeFilter + 
+					'group by leadid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF');
 			} else {
 				// get ids of contacts and lead that are in any of the selected campaigns to exclude
-				membersToAvoidC = [select contactid from campaignmember where contactid != null and campaignid in : subtractSet 
-										group by contactid limit : BATCH_CUTOFF];
+				membersToAvoidC = database.query(
+					'select contactid from campaignmember where contactid != null ' +
+					'and campaignid in : subtractSet ' + excludeFilter + 
+					'group by contactid limit : BATCH_CUTOFF');
 
-				membersToAvoidL = [select leadid from campaignmember where leadId != null and campaignid in : subtractSet 
-										and lead.isConverted = false 
-										group by leadid limit : BATCH_CUTOFF];
+				membersToAvoidL = database.query(
+					'select leadid from campaignmember where leadId != null and campaignid in : subtractSet ' + 
+					'and lead.isConverted = false ' + excludeFilter + 
+					'group by leadid limit : BATCH_CUTOFF');
 			}
 			// add the ids to sets
 			for (sobject cm : membersToAvoidC) avoidSetC.add((id)(cm.get('contactId')));
@@ -248,24 +284,29 @@ public with sharing class GW_CTRL_CampaignCombiner {
 			if (intersectionForAdds) {
 				// get ids of contacts and lead that are in all selected campaigns to add
 				integer siz = addSet.size();
-				membersToAddC = [select contactid from campaignmember where campaignid in : addSet and contactid != null 
-									and contactid not in : existingCons and contactid not in : avoidSetC 
-									group by contactid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF];
+				
+				membersToAddC = database.query(
+					'select contactid from campaignmember where campaignid in : addSet and contactid != null ' + 
+					'and contactid not in : existingCons and contactid not in : avoidSetC ' + addFilter + 
+					'group by contactid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF');
 
-				membersToAddL = [select leadid from campaignmember where campaignid in : addSet and leadId != null 
-									and leadid not in : existingLeads and leadid not in : avoidSetL
-									and lead.isConverted = false 
-									group by leadid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF];
+				membersToAddL = database.query(
+					'select leadid from campaignmember where campaignid in : addSet and leadId != null ' + 
+					'and leadid not in : existingLeads and leadid not in : avoidSetL ' + addFilter +
+					'and lead.isConverted = false ' + 
+					'group by leadid having count_distinct(campaignid) = : siz limit : BATCH_CUTOFF');
 			} else {
 				// get ids of contacts and lead that are in any of the selected campaigns to add
-				membersToAddC = [select contactid from campaignmember where contactid != null 
-									and contactid not in : existingCons and contactid not in : avoidSetC 
-									and campaignid in : addSet group by contactid limit : BATCH_CUTOFF];
+				membersToAddC = database.query(
+					'select contactid from campaignmember where contactid != null ' + 
+					'and contactid not in : existingCons and contactid not in : avoidSetC ' + addFilter + 
+					'and campaignid in : addSet group by contactid limit : BATCH_CUTOFF');
 									
-				membersToAddL = [select leadid from campaignmember where leadId != null 
-									and leadid not in : existingLeads and leadid not in : avoidSetL 
-									and lead.isConverted = false 
-									and campaignid in : addSet group by leadid limit : BATCH_CUTOFF];
+				membersToAddL = database.query(
+					'select leadid from campaignmember where leadId != null ' + 
+					'and leadid not in : existingLeads and leadid not in : avoidSetL ' + 
+					'and lead.isConverted = false ' + addFilter +
+					'and campaignid in : addSet group by leadid limit : BATCH_CUTOFF');
 			}
 				
 			// create new member records to add to the target campaign
@@ -338,7 +379,8 @@ public with sharing class GW_CTRL_CampaignCombiner {
 			bcc = new GW_BATCH_CombineCampaigns();
 			try {
 				// first contacts
-				bcc.query = 'SELECT id FROM contact WHERE id IN (select contactId from campaignMember where campaignId IN (' + campaignIdList + ')) '; 
+				bcc.query = 'SELECT id FROM contact WHERE id IN ' +
+					'(select contactId from campaignMember where campaignId IN (' + campaignIdList + ')' + addFilter + ') '; 
 				bcc.targetCampaign = targetCampaign.id;
 				bcc.addSet = addSet; 
 				bcc.subtractSet = subtractSet; 
@@ -349,7 +391,8 @@ public with sharing class GW_CTRL_CampaignCombiner {
 				batchProcessId = Database.executeBatch(bcc);
 
 				// now leads
-				bcc.query = 'SELECT id FROM lead WHERE isConverted = false and id IN (select leadId from campaignMember where campaignId IN (' + campaignIdList + ')) '; 
+				bcc.query = 'SELECT id FROM lead WHERE isConverted = false and id IN ' +
+					'(select leadId from campaignMember where campaignId IN (' + campaignIdList + ')' + excludeFilter + ') '; 
 				batchProcessId = Database.executeBatch(bcc);
 			} catch (exception e) {
 			   	ApexPages.addMessage(new ApexPages.Message(ApexPages.Severity.ERROR,
@@ -503,6 +546,104 @@ public with sharing class GW_CTRL_CampaignCombiner {
 		system.assertEquals(3, controller.membersRemoved);
 		system.assertEquals(42, controller.targetCampaign.numberOfContacts);
 		system.assertEquals(1, controller.targetCampaign.unconverted_leads__c);
+	}
+
+	public static testMethod void testCampaignCombinerSpecifyStatus() {
+
+		// create test data
+		Contact[] testCons = New list<contact> ();
+		
+		for (integer i=0;i<60;i++) {
+			Contact newCon = New Contact (
+				FirstName = 'Number' + i,
+				LastName = 'Doppleganger',
+				OtherCity = 'Seattle'
+			);
+			testCons.add (newCon);
+		}
+		insert testCons;		
+
+		lead testLead = new lead(lastname='Cale', firstname='JJ', company='[not provided]');
+		insert testLead;
+
+		Campaign cmp0 = new Campaign (
+			Name='Target',
+			IsActive=true
+		);
+		insert cmp0;
+		Campaign cmp1 = new Campaign (
+			Name='Add1',
+			IsActive=true
+		);
+		insert cmp1;
+		Campaign cmp2 = new Campaign (
+			Name='Add2',
+			IsActive=true
+		);
+		insert cmp2;
+		Campaign cmp3 = new Campaign (
+			Name='Subtract',
+			IsActive=true
+		);
+		insert cmp3;
+		
+		// add a few contacts to each campaign - some should overlap, and only 3 should be Responded
+		campaignmember[] cms = new campaignmember[0];
+		for (integer i = 0; i < 60; i++) {
+			id cmpId = (i<5) ? cmp0.id : (i<30) ? cmp1.id : (i<40) ? cmp3.id : cmp2.id; 
+			cms.add(new campaignmember(campaignId = cmpId, contactId = testCons[i].id, status=((i==45 || i==35 || i==25) ? 'Responded' : 'Sent')));
+			if ((i>=50 && i<55) || i==0) cms.add(new campaignmember(campaignId = cmp1.Id, contactId = testCons[i].id));
+			if ((i>=55 && i<60) || i<3) cms.add(new campaignmember(campaignId = cmp3.Id, contactId = testCons[i].id, status=((i==1) ? 'Responded' : 'Sent')));
+		}
+		cms.add(new campaignmember(campaignId = cmp1.Id, leadId = testLead.id));					
+		insert cms;
+		
+		Test.startTest();
+
+		// create the page 
+		PageReference pageRef=Page.CampaignCombiner; 
+		Test.setCurrentPage(pageRef); 
+
+		// set the parameter for the contact
+		ApexPages.currentPage().getParameters().put('id', cmp0.id);
+		
+		// instantiate the controller
+		GW_CTRL_CampaignCombiner controller=new GW_CTRL_CampaignCombiner();
+		
+		// click some stuff
+		controller.clearPicker();
+		controller.step2();
+		controller.targetCampaign.name = 'TEST';
+		controller.step2();
+		controller.targetCampaignPicker.parentId = cmp0.id; 
+		controller.grabTargetCampaign();
+		List<SelectOption> lso = controller.getMemberStatuses();
+
+		// click continue
+		controller.step2(); 
+		controller.combine();
+	
+		// pick some campaigns
+		controller.campaignToAddPicker.parentId = cmp1.id;
+		controller.loadAddition();
+		controller.campaignToAddPicker.parentId = cmp2.id;
+		controller.loadAddition();
+		controller.campaignToSubtractPicker.parentId = cmp3.id;
+		controller.loadSubtraction();
+		
+		// set filters
+		controller.addMemberStatus = 'Responded';
+		controller.excludeMemberStatus = 'AllNotResponded';
+	
+		// click calculate
+		controller.combine();
+		controller.cancel();
+		
+		// look for the data
+		system.assertEquals(2, controller.membersAdded);
+		system.assertEquals(2, controller.membersRemoved);
+		system.assertEquals(5, controller.targetCampaign.numberOfContacts);
+		system.assertEquals(0, controller.targetCampaign.unconverted_leads__c);
 	}
 
 	public static testMethod void testCampaignCombinerIntersection() {

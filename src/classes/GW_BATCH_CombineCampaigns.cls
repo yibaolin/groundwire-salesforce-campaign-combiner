@@ -282,6 +282,7 @@ global class GW_BATCH_CombineCampaigns implements Database.Batchable<SObject> {
 
 		// this is critical - otherwise no test runs
 		Test.stopTest();		
+		system.assertEquals('test@test.com', bcc.notifyEmail); 
 	}		
 
 }
