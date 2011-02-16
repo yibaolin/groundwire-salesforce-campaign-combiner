@@ -1,19 +1,24 @@
 global class GW_BATCH_CombineCampaigns implements Database.Batchable<SObject> {
 // Batch apex class that adds or removes a large number of campaign members to or from a target campaign 
 // Written by Evan Callahan, copyright (c) 2010 Groundwire, 1402 3rd Avenue, Suite 1000, Seattle, WA 98101
-// This program is released under the GNU General Public License. http://www.gnu.org/licenses/
+// This program is released under the GNU Affero General Public License, Version 3. http://www.gnu.org/licenses/
 
 	public String query { get; set; }			// this must be campaign members, including id, campaignid, contactid, and leadid 
 	public Id targetCampaign { get; set; } 		// id of the campaign that gets affected
 	public String memberStatus { get; set; }    // if adding, put a valid status for the target campaign here
 	public string notifyEmail { get; set; }		// errors go here
 	
+	public set<id> allCampaignIds { get; set; } // ids of all campaigns	
 	public set<id> addSet { get; set; }   		// ids of campaigns with members to add	
 	public set<id> subtractSet { get; set; }	// ids of campaigns with members to exclude
 	
 	// these control whether members must be in ALL campaigns in order to be added or excluded
 	public boolean intersectionForAdds { get; set; }
 	public boolean intersectionForSubtracts { get; set; }
+
+	// where clauses for member status filter
+	public string addFilter { get; set; }		
+	public string excludeFilter { get; set; }	// errors go here
 	
 	global database.Querylocator start(Database.BatchableContext bc) {
 		return Database.getQueryLocator(query);		 
@@ -36,26 +41,27 @@ global class GW_BATCH_CombineCampaigns implements Database.Batchable<SObject> {
 		try {
 			
 			if (subtractSet !=null && !subtractSet.isEmpty()) {
-				if (intersectionForSubtracts) {
-					// get ids of contacts and lead that are in all selected campaigns to exclude
-					integer siz = subtractSet.size();
-					if (isContact) { 
-						membersToAvoid = [select contactid from campaignmember where contactid != null and campaignid in : subtractSet 
-											and contactId in : batch group by contactid having count_distinct(campaignid) = : siz ];
-					} else {
-						membersToAvoid = [select leadid from campaignmember where leadId != null and campaignid in : subtractSet
-											and leadId in : batch group by leadid having count_distinct(campaignid) = : siz ];
-					}
+
+				// get ids of contacts and lead that are in all selected campaigns to exclude
+				if (isContact) { 
+					membersToAvoid = database.query(
+						'select contactid from campaignmember where contactid != null and ' +
+						'contactid in : batch ' +
+						'and campaignid in : subtractSet ' + excludeFilter + 
+						' group by contactid' +
+						(intersectionForSubtracts ? 
+							' having count_distinct(campaignid) = : subtractSet.size()' : '') );
 				} else {
-					// get ids of contacts and lead that are in any of the selected campaigns to exclude
-					if (isContact) { 
-						membersToAvoid = [select contactid from campaignmember where contactid != null and campaignid in : subtractSet 
-											and contactId in : batch group by contactid];
-					} else {
-						membersToAvoid = [select leadid from campaignmember where leadId != null and campaignid in : subtractSet 
-											and leadId in : batch group by leadid];
-					}
+					membersToAvoid = database.query(
+						'select leadid from campaignmember where leadid != null and ' + 
+						'leadid in : batch ' +
+						'and lead.isConverted = false ' +  
+						'and campaignid in : subtractSet ' + excludeFilter + 
+						' group by leadid' +
+						(intersectionForSubtracts ? 
+							' having count_distinct(campaignid) = : subtractSet.size()' : '') );
 				}
+
 				// add the ids to sets
 				for (sobject cm : membersToAvoid) avoidSet.add((id)(cm.get(isContact ? 'contactId' : 'leadId')));
 				
@@ -79,33 +85,27 @@ global class GW_BATCH_CombineCampaigns implements Database.Batchable<SObject> {
 					if (cm.leadId != null) existingIds.add(cm.leadId);
 				}
 	
-				if (intersectionForAdds) {
-					// get ids of contacts and lead that are in all selected campaigns to add
-					integer siz = addSet.size();
-					if (isContact) { 
-						memberObjects = [select contactid from campaignmember where campaignid in : addSet and contactid != null 
-										and contactid not in : existingIds and contactid not in : avoidSet
-										and contactId in : batch  
-										group by contactid having count_distinct(campaignid) = : siz ];
-					} else {
-						memberObjects = [select leadid from campaignmember where campaignid in : addSet and leadId != null 
-										and leadid not in : existingIds and leadid not in : avoidSet
-										and leadId in : batch  
-										group by leadid having count_distinct(campaignid) = : siz ];
-					}
+				if (isContact) { 
+					memberObjects = database.query(
+						'select contactid from campaignmember where contactid != null and ' +
+						'contactid in : batch ' +
+						'and contactid not in : existingIds ' +
+						'and contactid not in : avoidSet ' +
+						'and campaignid in : addSet ' + addFilter + 
+						' group by contactid' +
+						(intersectionForAdds ? 
+							' having count_distinct(campaignid) = : addSet.size()' : '') );
 				} else {
-					// get ids of contacts and lead that are in any of the selected campaigns to add
-					if (isContact) { 
-						memberObjects = [select contactid from campaignmember where contactid != null 
-										and contactid not in : existingIds and contactid not in : avoidSet 
-										and contactId in : batch  
-										and campaignid in : addSet group by contactid ];
-					} else {
-						memberObjects = [select leadid from campaignmember where leadId != null 
-										and leadid not in : existingIds and leadid not in : avoidSet 
-										and leadId in : batch  
-										and campaignid in : addSet group by leadid ];
-					}
+					memberObjects = database.query(
+						'select leadid from campaignmember where leadid != null and ' + 
+						'leadid in : batch ' +
+						'and leadid not in : existingIds ' +
+						'and leadid not in : avoidSet ' +
+						'and lead.isConverted = false ' +  
+						'and campaignid in : addSet ' + addFilter + 
+						' group by leadid' +
+						(intersectionForAdds ? 
+							' having count_distinct(campaignid) = : addSet.size()' : '') );
 				}
 					
 				// create new member records to add to the target campaign
