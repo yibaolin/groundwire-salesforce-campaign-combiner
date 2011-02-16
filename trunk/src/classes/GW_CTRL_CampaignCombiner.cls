@@ -1,7 +1,7 @@
 public with sharing class GW_CTRL_CampaignCombiner {
 /*-----------------------------------------------------------------------------------------------
 * Written by Evan Callahan, copyright (c) 2010 Groundwire, 1402 3rd Avenue, Suite 1000, Seattle, WA 98101
-* This program is released under the GNU General Public License. http://www.gnu.org/licenses/
+* This program is released under the GNU Affero General Public License, Version 3. http://www.gnu.org/licenses/
 * 
 * controller for campaign combiner visualforce page
 * allows combining campaigns by adding and subtracting members
@@ -15,7 +15,7 @@ public with sharing class GW_CTRL_CampaignCombiner {
 	public final string NOTIFY_EMAIL = null;  							
 	
 	// we use batch processing if total members are greater than this
-	public integer BATCH_CUTOFF = 500;   					
+	public integer BATCH_CUTOFF = 1000;   					
 
 	// properties for page
 	public integer wizardStep { get; private set; }
@@ -198,29 +198,32 @@ public with sharing class GW_CTRL_CampaignCombiner {
 		}	
 
 		// build a list of affected campaign ids for later batch processing		
-		string campaignIdList = '\'' + targetCampaign.Id + '\'';
+		//string campaignIdList = '\'' + targetCampaign.Id + '\'';
+		set<id> allCampaignIds = new set<id> { targetCampaign.id };
 
 		// get the set of campaign ids for add and exclude
 		addSet = new set<id>();
 		subtractSet = new set<id>();
 		for (campaign c : campaignsToAdd) {
 			addSet.add(c.id);
-			campaignIdList += ',\'' + c.Id + '\'';
+	//		campaignIdList += ',\'' + c.Id + '\'';
+			allCampaignIds.add(c.id);
 		}
 		for (campaign c : campaignsToSubtract) {
 			subtractSet.add(c.id);
-			campaignIdList += ',\'' + c.Id + '\'';
+//			campaignIdList += ',\'' + c.Id + '\'';
+			allCampaignIds.add(c.id);
 		}
 				
 		// build the member status filter strings
 		string addFilter = (addMemberStatus == null) ? '' :
 			(addMemberStatus == 'AllResponded') ? 'and hasresponded = true ' :  
 			(addMemberStatus == 'AllNotResponded') ? 'and hasresponded = false ' :  
-			'and status = : addMemberStatus ';  
+			'and status = \'' + addMemberStatus + '\' ';  
 		string excludeFilter = (excludeMemberStatus == null) ? '' :
 			(excludeMemberStatus == 'AllResponded') ? 'and hasresponded = true ' :  
 			(excludeMemberStatus == 'AllNotResponded') ? 'and hasresponded = false ' :  
-			'and status = : excludeMemberStatus '; 
+			'and status = \'' + excludeMemberStatus + '\' '; 
 
 		list<sobject> membersToAvoidC = new list<campaignMember>();
 		list<sobject> membersToAvoidL = new list<campaignMember>();
@@ -380,19 +383,22 @@ public with sharing class GW_CTRL_CampaignCombiner {
 			try {
 				// first contacts
 				bcc.query = 'SELECT id FROM contact WHERE id IN ' +
-					'(select contactId from campaignMember where campaignId IN (' + campaignIdList + ')' + addFilter + ') '; 
+					'(select contactId from campaignMember where campaignId IN : allCampaignIds) '; 
 				bcc.targetCampaign = targetCampaign.id;
 				bcc.addSet = addSet; 
 				bcc.subtractSet = subtractSet; 
 				bcc.intersectionForAdds = intersectionForAdds;
 				bcc.intersectionForSubtracts = intersectionForSubtracts;
+				bcc.allCampaignIds = allCampaignIds;
+				bcc.addFilter = addFilter;
+				bcc.excludeFilter = excludeFilter;
 				bcc.memberStatus = (newMemberStatus == null || newMemberStatus == '') ? defaultStatus : newMemberStatus;
 				bcc.notifyEmail = NOTIFY_EMAIL;			
 				batchProcessId = Database.executeBatch(bcc);
 
 				// now leads
 				bcc.query = 'SELECT id FROM lead WHERE isConverted = false and id IN ' +
-					'(select leadId from campaignMember where campaignId IN (' + campaignIdList + ')' + excludeFilter + ') '; 
+					'(select leadId from campaignMember where campaignId IN :allCampaignIds) '; 
 				batchProcessId = Database.executeBatch(bcc);
 			} catch (exception e) {
 			   	ApexPages.addMessage(new ApexPages.Message(ApexPages.Severity.ERROR,
